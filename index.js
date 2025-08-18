@@ -46,7 +46,6 @@ async function fetchAndCacheData() {
     );
 
     const top10 = sorted.slice(0, 10);
-    if (top10.length >= 2) [top10[0], top10[1]] = [top10[1], top10[0]];
 
     cachedData = top10.map(entry => ({
       username: maskUsername(entry.username),
@@ -86,7 +85,6 @@ app.get("/leaderboard/prev", async (req, res) => {
     );
 
     const top10 = sorted.slice(0, 10);
-    if (top10.length >= 2) [top10[0], top10[1]] = [top10[1], top10[0]]; // 🟢 SWAP top 2
 
     const processed = top10.map(entry => ({
       username: maskUsername(entry.username),
