@@ -4,12 +4,23 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Upgrader API configuration
-const API_KEY = 'c8d7147e-a896-4992-8abf-d84504f17191';
+const API_KEY = process.env.UPGRADER_API_KEY;
 const BASE_URL = 'https://api.upgrader.com';
 const STATS_ENDPOINT = '/affiliate/creator/get-stats';
 
 // Rainbet API configuration
-const RAINBET_API_KEY = "ll7ILoJfEopD0DUY8oLXoyFpISFifOFv";
+const RAINBET_API_KEY = process.env.RAINBET_API_KEY;
+
+// Environment variable validation
+if (!API_KEY) {
+  console.error('❌ UPGRADER_API_KEY environment variable is required');
+  process.exit(1);
+}
+
+if (!RAINBET_API_KEY) {
+  console.error('❌ RAINBET_API_KEY environment variable is required');
+  process.exit(1);
+}
 const SELF_URL = `https://bigjuanwinsdata.onrender.com/leaderboard/top14`;
 
 let cachedRainbetData = [];
@@ -42,6 +53,104 @@ function getBiweeklyPeriods() {
     previous: { from: previousStart, to: previousEnd }
   };
 }
+// Advanced request headers that mimic real browser behavior
+function getBrowserHeaders() {
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
+  ];
+  
+  return {
+    'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'cross-site',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
+  };
+}
+
+// Try different request strategies to bypass blocking
+async function fetchWithAntiBlock(url, postData = null, attempt = 1) {
+  const strategies = [
+    // Strategy 1: Enhanced headers with random delay
+    async () => {
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 2000 + 1000));
+      const config = {
+        timeout: 30000,
+        headers: {
+          ...getBrowserHeaders(),
+          'Referer': 'https://google.com/',
+          'Origin': postData ? new URL(url).origin : undefined
+        }
+      };
+      
+      if (postData) {
+        return await axios.post(url, postData, config);
+      } else {
+        return await axios.get(url, config);
+      }
+    },
+    
+    // Strategy 2: Different user agent and longer delay
+    async () => {
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 3000 + 2000));
+      const config = {
+        timeout: 40000,
+        headers: {
+          ...getBrowserHeaders(),
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Referer': 'https://www.google.com/search?q=casino+games',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      };
+      
+      if (postData) {
+        return await axios.post(url, postData, config);
+      } else {
+        return await axios.get(url, config);
+      }
+    },
+    
+    // Strategy 3: Minimal headers, different approach
+    async () => {
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 5000 + 3000));
+      const config = {
+        timeout: 50000,
+        headers: {
+          'User-Agent': 'curl/7.68.0',
+          'Accept': '*/*'
+        }
+      };
+      
+      if (postData) {
+        return await axios.post(url, postData, config);
+      } else {
+        return await axios.get(url, config);
+      }
+    }
+  ];
+  
+  console.log(`[🔄] Trying anti-block strategy ${attempt}/3...`);
+  
+  try {
+    return await strategies[attempt - 1]();
+  } catch (error) {
+    if (attempt < 3) {
+      console.log(`[⚠️] Strategy ${attempt} failed, trying next approach...`);
+      return await fetchWithAntiBlock(url, postData, attempt + 1);
+    }
+    throw error;
+  }
+}
+
 // Fetch leaderboard data from affiliate API for given range
 async function fetchLeaderboard(fromDate, toDate) {
   const maxRetries = 3;
@@ -50,7 +159,6 @@ async function fetchLeaderboard(fromDate, toDate) {
     try {
       console.log(`[Attempt ${attempt}] Making API request to:`, BASE_URL + STATS_ENDPOINT);
       console.log('Request payload:', {
-        apikey: API_KEY.substring(0, 8) + '...',
         from: formatDate(fromDate),
         to: formatDate(toDate),
       });
@@ -62,12 +170,34 @@ async function fetchLeaderboard(fromDate, toDate) {
       }, {
         timeout: 30000, // 30 second timeout
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://upgrader.com/'
         }
       });
       
       console.log('API response status:', resp.status);
-      console.log('API response data:', JSON.stringify(resp.data, null, 2));
+      
+      // Check if we got an HTML response instead of JSON (Cloudflare blocking)
+      if (typeof resp.data === 'string' && resp.data.includes('<html')) {
+        console.log('[⚠️] Detected HTML response (likely Cloudflare blocking), trying anti-block...');
+        
+        const response = await fetchWithAntiBlock(BASE_URL + STATS_ENDPOINT, {
+          apikey: API_KEY,
+          from: formatDate(fromDate),
+          to: formatDate(toDate)
+        });
+        
+        if (response.data.error) {
+          throw new Error(response.data.message || response.data.msg || 'API error');
+        }
+        return response.data.data.summarizedBets || [];
+      }
+      
+      if (resp.data.data && resp.data.data.summarizedBets) {
+        console.log(`API response: Found ${resp.data.data.summarizedBets.length} user records`);
+      }
       
       if (resp.data.error) {
         throw new Error(resp.data.message || resp.data.msg || 'API error');
@@ -80,7 +210,9 @@ async function fetchLeaderboard(fromDate, toDate) {
       
       if (error.response) {
         console.error('Response status:', error.response.status);
-        console.error('Response data:', error.response.data);
+        if (error.response.data && error.response.data.msg) {
+          console.error('Response message:', error.response.data.msg);
+        }
         
         // Handle rate limiting
         if (error.response.status === 500 && error.response.data.msg && error.response.data.msg.includes('Rate limit')) {
@@ -90,6 +222,29 @@ async function fetchLeaderboard(fromDate, toDate) {
           if (attempt < maxRetries) {
             await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
             continue;
+          }
+        }
+        
+        // Handle 403/503 blocking by trying anti-block strategies
+        if ((error.response.status === 403 || error.response.status === 503 || error.response.status === 429) && attempt === maxRetries) {
+          console.log(`[⚠️] Got ${error.response.status} status, trying anti-block methods...`);
+          
+          try {
+            const response = await fetchWithAntiBlock(BASE_URL + STATS_ENDPOINT, {
+              apikey: API_KEY,
+              from: formatDate(fromDate),
+              to: formatDate(toDate)
+            });
+            
+            if (response.data.error) {
+              throw new Error(response.data.message || response.data.msg || 'API error');
+            }
+            
+            console.log('[✅] Anti-block method succeeded!');
+            return response.data.data.summarizedBets || [];
+            
+          } catch (antiBlockError) {
+            console.error('[❌] Anti-block method also failed:', antiBlockError.message);
           }
         }
       }
@@ -139,12 +294,38 @@ function getDynamicApiUrl() {
 
 async function fetchAndCacheRainbetData() {
   try {
-    const response = await axios.get(getDynamicApiUrl(), {
-      timeout: 30000, // 30 second timeout
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+    const apiUrl = getDynamicApiUrl();
+    let response;
+    
+    try {
+      // Try regular axios request first
+      response = await axios.get(apiUrl, {
+        timeout: 30000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://rainbet.com/'
+        }
+      });
+      
+      // Check for blocking (403, 429, etc.)
+      // We assume successful axios response means no blocking for now
+    } catch (error) {
+      if (error.response && (error.response.status === 403 || error.response.status === 429)) {
+        console.log('[⚠️] Rainbet API blocked, trying anti-block method...');
+        
+        try {
+          response = await fetchWithAntiBlock(apiUrl);
+        } catch (antiBlockError) {
+          console.error('[❌] Anti-block failed for Rainbet:', antiBlockError.message);
+          throw error;
+        }
+      } else {
+        throw error;
       }
-    });
+    }
+    
     const json = response.data;
     if (!json.affiliates) throw new Error("No data");
 
@@ -235,12 +416,35 @@ app.get('/leaderboard/prev', async (req, res) => {
     const endStr = prevMonthEnd.toISOString().slice(0, 10);
 
     const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${RAINBET_API_KEY}`;
-    const response = await axios.get(url, {
-      timeout: 30000, // 30 second timeout
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+    let response;
+    
+    try {
+      response = await axios.get(url, {
+        timeout: 30000, // 30 second timeout
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://rainbet.com/'
+        }
+      });
+      
+      // Check for blocking (response should be JSON, not HTML)
+      // We assume successful axios response means no blocking for now
+    } catch (error) {
+      if (error.response && (error.response.status === 403 || error.response.status === 429)) {
+        console.log('[⚠️] Rainbet previous API blocked, trying anti-block method...');
+        
+        try {
+          response = await fetchWithAntiBlock(url);
+        } catch (antiBlockError) {
+          console.error('[❌] Anti-block failed for Rainbet previous:', antiBlockError.message);
+          throw error;
+        }
+      } else {
+        throw error;
       }
-    });
+    }
     const json = response.data;
 
     if (!json.affiliates) throw new Error("No previous data");
