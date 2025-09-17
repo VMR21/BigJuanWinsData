@@ -42,36 +42,68 @@ function getBiweeklyPeriods() {
 }
 // Fetch leaderboard data from affiliate API for given range
 async function fetchLeaderboard(fromDate, toDate) {
-  try {
-    console.log('Making API request to:', BASE_URL + STATS_ENDPOINT);
-    console.log('Request payload:', {
-      apikey: API_KEY.substring(0, 8) + '...',
-      from: formatDate(fromDate),
-      to: formatDate(toDate),
-    });
-    
-    const resp = await axios.post(BASE_URL + STATS_ENDPOINT, {
-      apikey: API_KEY,
-      from: formatDate(fromDate),
-      to: formatDate(toDate),
-    });
-    
-    console.log('API response status:', resp.status);
-    console.log('API response data:', JSON.stringify(resp.data, null, 2));
-    
-    if (resp.data.error) {
-      throw new Error(resp.data.message || 'API error');
+  const maxRetries = 3;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[Attempt ${attempt}] Making API request to:`, BASE_URL + STATS_ENDPOINT);
+      console.log('Request payload:', {
+        apikey: API_KEY.substring(0, 8) + '...',
+        from: formatDate(fromDate),
+        to: formatDate(toDate),
+      });
+      
+      const resp = await axios.post(BASE_URL + STATS_ENDPOINT, {
+        apikey: API_KEY,
+        from: formatDate(fromDate),
+        to: formatDate(toDate),
+      }, {
+        timeout: 30000, // 30 second timeout
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+        }
+      });
+      
+      console.log('API response status:', resp.status);
+      console.log('API response data:', JSON.stringify(resp.data, null, 2));
+      
+      if (resp.data.error) {
+        throw new Error(resp.data.message || resp.data.msg || 'API error');
+      }
+      return resp.data.data.summarizedBets || [];
+      
+    } catch (error) {
+      console.error(`[Attempt ${attempt}] Fetch error details:`);
+      console.error('Message:', error.message);
+      
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+        
+        // Handle rate limiting
+        if (error.response.status === 500 && error.response.data.msg && error.response.data.msg.includes('Rate limit')) {
+          const waitTime = 30; // Wait 30 seconds for rate limit
+          console.log(`Rate limited. Waiting ${waitTime} seconds before retry...`);
+          
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+            continue;
+          }
+        }
+      }
+      
+      // If this was the last attempt or a non-rate-limit error, return null
+      if (attempt === maxRetries) {
+        console.error('All retry attempts failed');
+        return null;
+      }
+      
+      // Wait a bit before retrying for other errors
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    return resp.data.data.summarizedBets || [];
-  } catch (error) {
-    console.error('Fetch error details:');
-    console.error('Message:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
-    return null;
   }
+  
+  return null;
 }
 // Mask usernames, e.g., co***17
 function maskUsername(username) {
@@ -105,7 +137,12 @@ function getDynamicApiUrl() {
 
 async function fetchAndCacheRainbetData() {
   try {
-    const response = await axios.get(getDynamicApiUrl());
+    const response = await axios.get(getDynamicApiUrl(), {
+      timeout: 30000, // 30 second timeout
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+      }
+    });
     const json = response.data;
     if (!json.affiliates) throw new Error("No data");
 
@@ -173,7 +210,12 @@ app.get('/leaderboard/prev', async (req, res) => {
     const endStr = prevMonthEnd.toISOString().slice(0, 10);
 
     const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${RAINBET_API_KEY}`;
-    const response = await axios.get(url);
+    const response = await axios.get(url, {
+      timeout: 30000, // 30 second timeout
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
+      }
+    });
     const json = response.data;
 
     if (!json.affiliates) throw new Error("No previous data");
@@ -198,14 +240,14 @@ app.get('/leaderboard/prev', async (req, res) => {
 });
 // Initialize Rainbet data cache
 fetchAndCacheRainbetData();
-setInterval(fetchAndCacheRainbetData, 5 * 60 * 1000); // every 5 minutes
+setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes (reduced frequency)
 
-// Self-ping to keep service alive
+// Self-ping to keep service alive (reduced frequency to avoid rate limiting)
 setInterval(() => {
-  axios.get(SELF_URL)
+  axios.get(SELF_URL, { timeout: 5000 })
     .then(() => console.log(`[🔁] Self-pinged ${SELF_URL}`))
     .catch(err => console.error("[⚠️] Self-ping failed:", err.message));
-}, 270000); // every 4.5 mins
+}, 600000); // every 10 minutes
 
 // Start server
 app.listen(PORT, () => {
