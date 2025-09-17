@@ -263,6 +263,18 @@ app.get('/leaderboard/prev', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch previous leaderboard data." });
   }
 });
+
+// Bind server to all hosts for Replit compatibility
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server listening on 0.0.0.0:${PORT}`);
+  console.log(`Available endpoints:`);
+  console.log(`- Status: /`);
+  console.log(`- Upgrader current: /leaderboard/upgrader`);
+  console.log(`- Upgrader previous: /leaderboard/prev-upgrade`);
+  console.log(`- Rainbet current: /leaderboard/top14`);
+  console.log(`- Rainbet previous: /leaderboard/prev`);
+});
+
 // Initialize data caches
 fetchAndCacheRainbetData();
 setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes
@@ -273,20 +285,3 @@ setTimeout(() => {
   // Update Upgrader cache every 10 minutes
   setInterval(fetchAndCacheUpgraderData, 10 * 60 * 1000);
 }, 5000); // 5 second delay
-
-// Self-ping to keep service alive (reduced frequency to avoid rate limiting)
-setInterval(() => {
-  axios.get(SELF_URL, { timeout: 5000 })
-    .then(() => console.log(`[🔁] Self-pinged ${SELF_URL}`))
-    .catch(err => console.error("[⚠️] Self-ping failed:", err.message));
-}, 600000); // every 10 minutes
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
-  console.log(`Available endpoints:`);
-  console.log(`- Upgrader current: /leaderboard/upgrader`);
-  console.log(`- Upgrader previous: /leaderboard/prev-upgrade`);
-  console.log(`- Rainbet current: /leaderboard/top14`);
-  console.log(`- Rainbet previous: /leaderboard/prev`);
-});
