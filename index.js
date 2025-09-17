@@ -1,5 +1,6 @@
 import express from 'express';
 import axios from 'axios';
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -10,8 +11,9 @@ const STATS_ENDPOINT = '/affiliate/creator/get-stats';
 
 // Rainbet API configuration
 const RAINBET_API_KEY = "ll7ILoJfEopD0DUY8oLXoyFpISFifOFv";
-const SELF_URL = `https://bigjuanwinsdata.onrender.com/leaderboard/top14`;
+const SELF_URL = `http://localhost:${PORT}/leaderboard/top14`;
 
+// Cache variables
 let cachedRainbetData = [];
 let cachedUpgraderCurrent = [];
 let cachedUpgraderPrevious = [];
@@ -23,10 +25,12 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Headers", "Content-Type");
   next();
 });
+
 // Utility to format Date as YYYY-MM-DD
 function formatDate(date) {
   return date.toISOString().substring(0, 10);
 }
+
 // Calculate biweekly periods starting from 2025-09-17 00:00 UTC
 function getBiweeklyPeriods() {
   const anchor = new Date(Date.UTC(2025, 8, 17, 0, 0, 0));
@@ -42,10 +46,10 @@ function getBiweeklyPeriods() {
     previous: { from: previousStart, to: previousEnd }
   };
 }
-// Fetch leaderboard data from affiliate API for given range
+
+// Fetch leaderboard data from Upgrader affiliate API for given range
 async function fetchLeaderboard(fromDate, toDate) {
   const maxRetries = 3;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[Attempt ${attempt}] Making API request to:`, BASE_URL + STATS_ENDPOINT);
@@ -104,14 +108,15 @@ async function fetchLeaderboard(fromDate, toDate) {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
-  
   return null;
 }
+
 // Mask usernames, e.g., co***17
 function maskUsername(username) {
   if (username.length <= 4) return username;
   return username.slice(0, 2) + '***' + username.slice(-2);
 }
+
 // Format data to required output structure
 function formatOutput(data) {
   if (!data) return [];
@@ -127,13 +132,10 @@ function getDynamicApiUrl() {
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth(); // 0-indexed
-
   const start = new Date(Date.UTC(year, month, 1));
   const end = new Date(Date.UTC(year, month + 1, 0));
-
   const startStr = start.toISOString().slice(0, 10);
   const endStr = end.toISOString().slice(0, 10);
-
   return `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${RAINBET_API_KEY}`;
 }
 
@@ -147,53 +149,40 @@ async function fetchAndCacheRainbetData() {
     });
     const json = response.data;
     if (!json.affiliates) throw new Error("No data");
-
     const sorted = json.affiliates.sort(
       (a, b) => parseFloat(b.wagered_amount) - parseFloat(a.wagered_amount)
     );
-
     const top10 = sorted.slice(0, 10);
-
     cachedRainbetData = top10.map(entry => ({
       username: maskUsername(entry.username),
       wagered: Math.round(parseFloat(entry.wagered_amount)),
       weightedWager: Math.round(parseFloat(entry.wagered_amount)),
     }));
-
     console.log(`[✅] Rainbet leaderboard updated`);
   } catch (err) {
     console.error("[❌] Failed to fetch Rainbet data:", err.message);
   }
 }
 
-// Cache Upgrader data to avoid rate limiting
+// Upgrader data fetch and cache (new)
 async function fetchAndCacheUpgraderData() {
   try {
     const periods = getBiweeklyPeriods();
-    
-    console.log('[📊] Fetching Upgrader data...');
-    
-    // Fetch current period
+
+    // Fetch current period data
     const currentData = await fetchLeaderboard(periods.current.from, periods.current.to);
-    if (currentData !== null) {
-      cachedUpgraderCurrent = formatOutput(currentData);
-      console.log('[✅] Upgrader current period data updated');
-    }
-    
-    // Wait a bit before next call to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    // Fetch previous period
+    if (currentData !== null) cachedUpgraderCurrent = currentData;
+
+    // Fetch previous period data
     const previousData = await fetchLeaderboard(periods.previous.from, periods.previous.to);
-    if (previousData !== null) {
-      cachedUpgraderPrevious = formatOutput(previousData);
-      console.log('[✅] Upgrader previous period data updated');
-    }
-    
+    if (previousData !== null) cachedUpgraderPrevious = previousData;
+
+    console.log(`[✅] Upgrader leaderboard data updated`);
   } catch (err) {
-    console.error("[❌] Failed to fetch Upgrader data:", err.message);
+    console.error('[❌] Failed to update Upgrader leaderboard data:', err.message);
   }
 }
+
 // Status endpoint to show API connection
 app.get('/', (req, res) => {
   res.json({
@@ -211,16 +200,39 @@ app.get('/', (req, res) => {
   });
 });
 
-// Express endpoint for current leaderboard data (cached)
+// Modified endpoints using cached Upgrader data
+
 app.get('/leaderboard/upgrader', (req, res) => {
-  res.json(cachedUpgraderCurrent);
-});
-// Express endpoint for previous leaderboard data (cached)
-app.get('/leaderboard/prev-upgrade', (req, res) => {
-  res.json(cachedUpgraderPrevious);
+  if (cachedUpgraderCurrent.length === 0) {
+    // If cache empty, try fetching live data (fallback)
+    fetchLeaderboard(getBiweeklyPeriods().current.from, getBiweeklyPeriods().current.to)
+      .then(data => {
+        if (!data) return res.status(500).json({ error: 'Failed to fetch data' });
+        cachedUpgraderCurrent = data;
+        res.json(formatOutput(cachedUpgraderCurrent));
+      })
+      .catch(() => res.status(500).json({ error: 'Failed to fetch data' }));
+  } else {
+    res.json(formatOutput(cachedUpgraderCurrent));
+  }
 });
 
-// Rainbet endpoints
+app.get('/leaderboard/prev-upgrade', (req, res) => {
+  if (cachedUpgraderPrevious.length === 0) {
+    // If cache empty, try fetching live data (fallback)
+    fetchLeaderboard(getBiweeklyPeriods().previous.from, getBiweeklyPeriods().previous.to)
+      .then(data => {
+        if (!data) return res.status(500).json({ error: 'Failed to fetch data' });
+        cachedUpgraderPrevious = data;
+        res.json(formatOutput(cachedUpgraderPrevious));
+      })
+      .catch(() => res.status(500).json({ error: 'Failed to fetch data' }));
+  } else {
+    res.json(formatOutput(cachedUpgraderPrevious));
+  }
+});
+
+// Rainbet endpoints (unchanged)
 app.get('/leaderboard/top14', (req, res) => {
   res.json(cachedRainbetData);
 });
@@ -230,33 +242,26 @@ app.get('/leaderboard/prev', async (req, res) => {
     const now = new Date();
     const prevMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const prevMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
-
     const startStr = prevMonth.toISOString().slice(0, 10);
     const endStr = prevMonthEnd.toISOString().slice(0, 10);
-
     const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${startStr}&end_at=${endStr}&key=${RAINBET_API_KEY}`;
     const response = await axios.get(url, {
-      timeout: 30000, // 30 second timeout
+      timeout: 30000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; LeaderboardAPI/1.0)'
       }
     });
     const json = response.data;
-
     if (!json.affiliates) throw new Error("No previous data");
-
     const sorted = json.affiliates.sort(
       (a, b) => parseFloat(b.wagered_amount) - parseFloat(a.wagered_amount)
     );
-
     const top10 = sorted.slice(0, 10);
-
     const processed = top10.map(entry => ({
       username: maskUsername(entry.username),
       wagered: Math.round(parseFloat(entry.wagered_amount)),
       weightedWager: Math.round(parseFloat(entry.wagered_amount)),
     }));
-
     res.json(processed);
   } catch (err) {
     console.error("[❌] Failed to fetch previous leaderboard:", err.message);
@@ -264,24 +269,27 @@ app.get('/leaderboard/prev', async (req, res) => {
   }
 });
 
-// Bind server to all hosts for Replit compatibility
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server listening on 0.0.0.0:${PORT}`);
+// Initialize data caches on startup
+fetchAndCacheRainbetData();
+fetchAndCacheUpgraderData();
+
+// Schedule data refresh every 10 minutes
+setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000);
+setInterval(fetchAndCacheUpgraderData, 10 * 60 * 1000);
+
+// Self-ping to keep service alive every 10 minutes
+setInterval(() => {
+  axios.get(SELF_URL, { timeout: 5000 })
+    .then(() => console.log(`[🔁] Self-pinged ${SELF_URL}`))
+    .catch(err => console.error("[⚠️] Self-ping failed:", err.message));
+}, 600000);
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
   console.log(`Available endpoints:`);
-  console.log(`- Status: /`);
   console.log(`- Upgrader current: /leaderboard/upgrader`);
   console.log(`- Upgrader previous: /leaderboard/prev-upgrade`);
   console.log(`- Rainbet current: /leaderboard/top14`);
   console.log(`- Rainbet previous: /leaderboard/prev`);
 });
-
-// Initialize data caches
-fetchAndCacheRainbetData();
-setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes
-
-// Initialize Upgrader cache with delay to avoid immediate rate limiting
-setTimeout(() => {
-  fetchAndCacheUpgraderData();
-  // Update Upgrader cache every 10 minutes
-  setInterval(fetchAndCacheUpgraderData, 10 * 60 * 1000);
-}, 5000); // 5 second delay
