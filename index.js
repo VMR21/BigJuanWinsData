@@ -13,6 +13,8 @@ const RAINBET_API_KEY = "ll7ILoJfEopD0DUY8oLXoyFpISFifOFv";
 const SELF_URL = `https://bigjuanwinsdata.onrender.com/leaderboard/top14`;
 
 let cachedRainbetData = [];
+let cachedUpgraderCurrent = [];
+let cachedUpgraderPrevious = [];
 
 // CORS headers
 app.use((req, res, next) => {
@@ -163,6 +165,35 @@ async function fetchAndCacheRainbetData() {
     console.error("[❌] Failed to fetch Rainbet data:", err.message);
   }
 }
+
+// Cache Upgrader data to avoid rate limiting
+async function fetchAndCacheUpgraderData() {
+  try {
+    const periods = getBiweeklyPeriods();
+    
+    console.log('[📊] Fetching Upgrader data...');
+    
+    // Fetch current period
+    const currentData = await fetchLeaderboard(periods.current.from, periods.current.to);
+    if (currentData !== null) {
+      cachedUpgraderCurrent = formatOutput(currentData);
+      console.log('[✅] Upgrader current period data updated');
+    }
+    
+    // Wait a bit before next call to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Fetch previous period
+    const previousData = await fetchLeaderboard(periods.previous.from, periods.previous.to);
+    if (previousData !== null) {
+      cachedUpgraderPrevious = formatOutput(previousData);
+      console.log('[✅] Upgrader previous period data updated');
+    }
+    
+  } catch (err) {
+    console.error("[❌] Failed to fetch Upgrader data:", err.message);
+  }
+}
 // Status endpoint to show API connection
 app.get('/', (req, res) => {
   res.json({
@@ -180,19 +211,13 @@ app.get('/', (req, res) => {
   });
 });
 
-// Express endpoint for current leaderboard data
-app.get('/leaderboard/upgrader', async (req, res) => {
-  const periods = getBiweeklyPeriods();
-  const data = await fetchLeaderboard(periods.current.from, periods.current.to);
-  if (data === null) return res.status(500).json({ error: 'Failed to fetch data' });
-  res.json(formatOutput(data));
+// Express endpoint for current leaderboard data (cached)
+app.get('/leaderboard/upgrader', (req, res) => {
+  res.json(cachedUpgraderCurrent);
 });
-// Express endpoint for previous leaderboard data
-app.get('/leaderboard/prev-upgrade', async (req, res) => {
-  const periods = getBiweeklyPeriods();
-  const data = await fetchLeaderboard(periods.previous.from, periods.previous.to);
-  if (data === null) return res.status(500).json({ error: 'Failed to fetch data' });
-  res.json(formatOutput(data));
+// Express endpoint for previous leaderboard data (cached)
+app.get('/leaderboard/prev-upgrade', (req, res) => {
+  res.json(cachedUpgraderPrevious);
 });
 
 // Rainbet endpoints
@@ -238,9 +263,16 @@ app.get('/leaderboard/prev', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch previous leaderboard data." });
   }
 });
-// Initialize Rainbet data cache
+// Initialize data caches
 fetchAndCacheRainbetData();
-setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes (reduced frequency)
+setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes
+
+// Initialize Upgrader cache with delay to avoid immediate rate limiting
+setTimeout(() => {
+  fetchAndCacheUpgraderData();
+  // Update Upgrader cache every 10 minutes
+  setInterval(fetchAndCacheUpgraderData, 10 * 60 * 1000);
+}, 5000); // 5 second delay
 
 // Self-ping to keep service alive (reduced frequency to avoid rate limiting)
 setInterval(() => {
