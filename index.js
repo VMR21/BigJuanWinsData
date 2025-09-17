@@ -265,13 +265,13 @@ app.get('/leaderboard/prev', async (req, res) => {
 });
 // Initialize data caches
 fetchAndCacheRainbetData();
-setInterval(fetchAndCacheRainbetData, 10 * 60 * 1000); // every 10 minutes
+setInterval(fetchAndCacheRainbetData, 1 * 60 * 1000); // every 1 minutes
 
 // Initialize Upgrader cache with delay to avoid immediate rate limiting
 setTimeout(() => {
   fetchAndCacheUpgraderData();
-  // Update Upgrader cache every 10 minutes
-  setInterval(fetchAndCacheUpgraderData, 10 * 60 * 1000);
+  // Update Upgrader cache every 1 minutes
+  setInterval(fetchAndCacheUpgraderData, 1 * 60 * 1000);
 }, 5000); // 5 second delay
 
 // Self-ping to keep service alive (reduced frequency to avoid rate limiting)
