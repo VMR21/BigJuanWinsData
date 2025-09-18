@@ -31,9 +31,9 @@ function formatDate(date) {
   return date.toISOString().substring(0, 10);
 }
 
-// Calculate biweekly periods starting from 2025-09-17 00:00 UTC
+// Calculate biweekly periods starting from 2025-09-18 00:00 UTC
 function getBiweeklyPeriods() {
-  const anchor = new Date(Date.UTC(2025, 8, 17, 0, 0, 0));
+  const anchor = new Date(Date.UTC(2025, 8, 18, 0, 0, 0));
   const now = new Date();
   const msPerPeriod = 14 * 24 * 60 * 60 * 1000;
   const elapsedPeriods = Math.floor((now - anchor) / msPerPeriod);
